@@ -1,0 +1,78 @@
+@Library('jenkins-github-deploy-lib@main') _
+
+pipeline {
+    agent any
+
+    environment {
+        JAVA_HOME = '/usr/lib/jvm/java-11-openjdk-amd64'
+        registry="hhkp"
+        
+    }
+
+    tools {
+        maven "maven"
+    }
+    stages {
+        stage('Checkout SCM...') {
+            steps {
+                // Checkout the Git repository
+                script {
+                    checkoutStep(this, 'vserdiukov', 'https://github.com/HHKP1/epm-practice-lab-cicd-tasks.git')
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                dir('home-task') {
+                    sh 'mvn clean install -DARTEFACT_NAME=hello-${BUILD_NUMBER}' // Build the project
+                    sh 'java -jar target/*.jar >> output.log' // Run JAR and save output to output.log
+                }
+            }
+        }
+        stage('Create Tar File') {
+            steps {
+                dir('home-task') {
+                    sh 'tar -czf hello-${BUILD_NUMBER}.tar.gz target/*.jar output.log'
+                }
+            }
+        }
+        stage('Docker build') {
+            steps {
+                dir('home-task') {
+                    sh 'docker build --build-arg="BUILD_NUMBER=${BUILD_NUMBER}" -t hhkp/helloworld-vserdiukov .'
+                }
+            }
+        }
+        stage('Deploy to Docker Hub') {
+            steps {
+                // Log in to Docker Hub
+                withCredentials([string(credentialsId: 'docker-access-token', variable: 'DOCKER_ACCESS_TOKEN')]) {
+                    sh "echo $DOCKER_ACCESS_TOKEN | docker login -u hhkp --password-stdin"
+                }
+
+                // Tag the Docker image
+                sh 'docker tag hhkp/helloworld-vserdiukov:latest hhkp/helloworld-vserdiukov:latest'
+
+                // Push the Docker image to Docker Hub
+                sh 'docker push hhkp/helloworld-vserdiukov:latest'
+            }
+        }
+    }
+
+    post {
+        always {
+            dir('home-task') {
+                script {
+                // Archive JAR file
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+
+                // Archive output log file
+                    archiveArtifacts artifacts: 'output.log', fingerprint: true
+
+                // Create a tar.gz file containing both the JAR file and the output log file
+                    sh 'tar -czf hello-${BUILD_NUMBER}.tar.gz target/*.jar output.log'
+                }
+            }
+        }
+    }
+}
